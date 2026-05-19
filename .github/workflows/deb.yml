@@ -1,0 +1,63 @@
+name: Build DEB Packages and Release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-deb:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        arch:
+          - { goarch: amd64, fpm: amd64 }
+          - { goarch: arm64, fpm: arm64 }
+          - { goarch: arm,   goarm: "7", fpm: armhf }
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23"
+
+      - name: Install fpm
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ruby ruby-dev gcc make
+          sudo gem install --no-document fpm
+
+      - name: Build binary
+        run: |
+          mkdir -p dist
+          if [ -n "${{ matrix.arch.goarm }}" ]; then
+            export GOARM=${{ matrix.arch.goarm }}
+          fi
+          CGO_ENABLED=0 GOOS=linux GOARCH=${{ matrix.arch.goarch }} go build -o dist/wpback_${{ matrix.arch.goarch }} .
+      
+      - name: Build .deb
+        run: |
+          VERSION="${GITHUB_REF_NAME:-0.0.0}"
+          if [[ "$VERSION" == "main" || "$VERSION" == "master" ]]; then
+            VERSION="0.0.0+${GITHUB_SHA::7}"
+          fi
+
+          fpm -s dir -t deb \
+            -n wpback \
+            -v "$VERSION" \
+            -a ${{ matrix.arch.fpm }} \
+            --prefix /usr/local/bin \
+            dist/wpback_${{ matrix.arch.goarch }}=/usr/local/bin/wpback
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: wpback-deb-${{ matrix.arch.fpm }}
+          path: "*.deb"
